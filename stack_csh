@@ -1,0 +1,241 @@
+#!/bin/bash
+
+if [ -z "$cdstack_ind" ]; then
+	# get absolute path to current script
+	abs=$( cd `dirname "$BASH_SOURCE"` ; pwd -P)
+	alias pushd=". $abs/stack_csh pushd"
+	alias p=". $abs/stack_csh pushd"
+	alias popd=". $abs/stack_csh popd"
+	alias dpop=". $abs/stack_csh dpop"
+	alias popa=". $abs/stack_csh popa"
+	alias popg=". $abs/stack_csh popg"
+	alias gop=". $abs/stack_csh popg"
+	alias pops=". $abs/stack_csh pops"
+	alias popl=". $abs/stack_csh popl"
+	
+	declare -i cdstack_ind=0
+	declare -a cdstack
+fi
+# ------------------------------------------------------
+help() {
+# ------------------------------------------------------
+# Affichage de l'aide
+#-------------------------------------------------------
+cat << 'END'
+Stack based navigation through *NIX folders
+
+Capabilities :
+
+- pushd <path>
+      Stores current location at the top of the stack before jumping to <path>
+
+- pushd <n> <path>
+      Stores given <path> at the <n>th position of the stack (the previous value at this position is then lost).
+
+- pushd
+        Prints out the stack
+
+- popd :
+      Jumps to the path given by the last value in stack and set the stack position to the previous one.
+      Thus the next popd jumps back to the previous path, and so on until stack is "empty".
+      Actually stack values are not lost, only the stack position is changed. 
+
+- dpop :
+      Sort of "undo popd", increasing the stack position by one and jumping to the path given by the corresponding value.
+      When reaching the real top of the stack, it stops saying so.
+
+- popa :
+      Cleans the stack (== popd*).
+      All values are lost.
+
+- popg <n> :
+      Jumps to the path given by the <n>th value of the stack.
+      The stack itself and its "position" are left unchanged.
+
+- pops <path>
+      Records the stack in the file given by <path>
+
+- popl <path>
+      Loads the stack with the content of the file given by <path>, expected to be previously saved by pops.
+      The previous values of stack are lost.
+
+END
+}
+
+# ------------------------------------------------------
+save_stack() {
+# ------------------------------------------------------
+  declare -i cdtmp=0
+  fic=$HOME/.stack
+  [ -e $fic ] && rm -f $fic
+  while [ $cdtmp -lt $cdstack_ind ]
+  do
+    echo "${cdstack[$cdtmp]}" >> $fic
+    cdtmp=$cdtmp+1
+  done
+}
+
+
+# ------------------------------------------------------
+read_stack() {
+# ------------------------------------------------------
+  declare -i cdtmp=0
+  fic=$HOME/.stack
+  if [ -e $fic ]; then
+    while read item
+    do
+      cdstack[$cdtmp]=$item
+      #echo "init pushd[$cdtmp]:${cdstack[$cdtmp]}"
+      cdtmp=$cdtmp+1
+    done < $fic
+    cdstack_ind=$cdtmp
+  fi
+}
+
+
+#=======================================================
+# help
+#=======================================================
+if [ "$2" = "-h" ]
+then
+  help
+  return
+fi
+
+#=======================================================
+# init
+#=======================================================
+if [ "$1" = "init" ]; then
+  read_stack
+fi
+
+#=======================================================
+# pushd
+#=======================================================
+if [ "$1" = "pushd" ]; then
+# ------ cas du PUSHD
+  if [ "${2}x" = "x" ]; then
+# ------  sans argument on donne la pile
+    declare -i cdtmp=0
+    echo "cdstack_ind=$cdstack_ind"
+    while [ $cdtmp -lt $cdstack_ind ]
+      do
+        echo "[$cdtmp]:${cdstack[$cdtmp]}"
+        cdtmp=$cdtmp+1
+      done
+    echo
+  elif [ "${3}x" = "x" ]; then
+# ------  avec un argument => on change de directory
+    tgt=`pwd`
+    cd $2 2> ~/.stack_csh_err
+    err=`cat ~/.stack_csh_err | grep "not found"`
+    if [ "${err}x" != "x" ]
+    then
+      echo "Bad target directory."
+    else
+      cdstack[$cdstack_ind]=$tgt
+      echo "[$cdstack_ind]:${cdstack[$cdstack_ind]} -> $tgt"
+      cdstack_ind=$cdstack_ind+1
+      save_stack
+    fi
+  else
+# ------  avec deux arguments, on change le Nieme point de chute
+    oldval=${cdstack[$2]}
+    cd $3 2> ~/.stack_csh_err
+    err=`cat ~/.stack_csh_err | grep "not found"`
+    if [ "${err}x" != "x" ]
+    then
+      echo "Bad target directory."
+    else
+      cdstack[$2]=`pwd`
+      echo "[$2]:$old => ${cdstack[$2]}"
+      save_stack
+    fi
+  fi
+  return
+fi
+
+#=======================================================
+# popd
+#=======================================================
+if [ "$1" = "popd" ]; then
+# ------  cas du POPD
+  if [ $cdstack_ind = 0 ]
+  then
+# ------  pile vide
+    echo "popd: Directory stack empty."
+    return
+  else
+# ------  pile pas vide, on depile
+    cdstack[$cdstack_ind]=`pwd`
+    cdstack_ind=$cdstack_ind-1
+    echo "[$cdstack_ind]:${cdstack[$cdstack_ind]}"
+    cd ${cdstack[$cdstack_ind]}
+    save_stack
+  fi
+  return
+fi
+
+#=======================================================
+# dpop
+#=======================================================
+if [ "$1" = "dpop" ]; then
+  cdstack_ind=$cdstack_ind+1
+  tgt=${cdstack[$cdstack_ind]}
+  if [ "$tgt" = "" ]
+  then
+    echo "dpop: You are already in top of the stack."
+    cdstack_ind=$cdstack_ind-1
+  else
+    echo "[$cdstack_ind]:$tgt"
+    cd "$tgt"
+  fi
+  return
+fi
+
+#=======================================================
+# popa
+#=======================================================
+if [ "$1" = "popa" ]; then
+  cdstack_ind=0
+  cdstack[1]=""
+  echo "stack reset done."
+  return
+fi
+
+#=======================================================
+# popg
+#=======================================================
+if [ "$1" = "popg" ]; then
+  echo "[$2]:${cdstack[$2]}"
+  cd ${cdstack[$2]}
+  return
+fi
+
+#=======================================================
+# pops
+#=======================================================
+if [ "$1" = "pops" ]; then
+  fic=$HOME/.stack
+  tgt=$2
+  if [ "$tgt" = "" ]; then
+    tgt="stack.pop"
+  fi
+  cp $fic $tgt
+  echo "saved stack in $tgt"
+fi
+
+#=======================================================
+# popl
+#=======================================================
+if [ "$1" = "popl" ]; then
+  fic=$HOME/.stack
+  src=$2
+  if [ "$src" = "" ]; then
+    src="stack.pop"
+  fi
+  cp $src $fic
+  read_stack
+  echo "loaded stack from $src"
+fi
+
